@@ -1,0 +1,52 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing / type checking
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Data and generated output (tracked .gitkeep files are unaffected)
+data/
+output/
+models/
+
+# Model weights
+*.pt
+*.pth
+*.onnx
+*.engine
+*.engine.gz
+*.tflite
+*.pkl
+
+# Media assets
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+# Logs
+*.log
+logs/
