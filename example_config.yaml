@@ -1,0 +1,60 @@
+# Example configuration for object_detection_tracking_code_alpha
+#
+# Usage:
+#   python main.py --config example_config.yaml
+#
+# Precedence:  dataclass defaults  <  this file  <  CLI flags
+# So `python main.py --config example_config.yaml --imgsz 320` wins.
+
+# ---------------------------------------------------------------------------
+# Input
+# ---------------------------------------------------------------------------
+source: "0"          # 0 = webcam, or an image/video file path, or rtsp:// URL
+device: "auto"       # auto | cpu | 0
+num_threads: 6       # torch.set_num_threads(). Dev box = 10 physical / 12 logical.
+
+log_level: "INFO"    # DEBUG | INFO | WARNING | ERROR
+# log_file: "output/run.log"
+
+# ---------------------------------------------------------------------------
+# Detector
+# ---------------------------------------------------------------------------
+detector:
+  model: "yolov8n"   # yolov8n is the fastest; yolo26n is current-generation
+  conf: 0.25         # detection confidence threshold
+  iou: 0.45          # NMS IoU threshold
+  imgsz: 480         # MUST be a multiple of 32. 480 beats 640 on CPU.
+  half: false        # MUST stay false on CPU
+  max_det: 100       # cap on detections per frame
+  classes: null      # e.g. [0] for person only; null = all 80 COCO classes
+
+# ---------------------------------------------------------------------------
+# Tracker (ByteTrack)
+# ---------------------------------------------------------------------------
+tracker:
+  track_high_thresh: 0.5   # 1st association pass: confident detections
+  track_low_thresh: 0.1    # 2nd pass: recover lost tracks from weak detections
+  new_track_thresh: 0.6    # spawn a new track above this score
+  track_buffer: 30         # frames a lost track survives before deletion
+  match_thresh: 0.8        # minimum IoU for a valid association
+  frame_rate: 30           # only used if the container reports no FPS
+
+# ---------------------------------------------------------------------------
+# Visualization
+# ---------------------------------------------------------------------------
+visualization:
+  show_fps: true       # FPS + resolution HUD in the top-left corner
+  show_confidence: true
+  draw_trails: false   # motion trail per track
+  trail_length: 30
+  thickness: 2         # border thickness in pixels
+  font_scale: 0.5
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+output:
+  save_video: true
+  save_csv: true
+  output_dir: "output"
+  codec: "mp4v"        # falls back to avc1, then MJPG if unsupported
