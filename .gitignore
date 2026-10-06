@@ -46,6 +46,7 @@ models/
 *.mov
 *.mkv
 *.webm
+test_*.jpg
 
 # Logs
 *.log

@@ -1,0 +1,6 @@
+[flake8]
+max-line-length = 100
+# E501 is ignored because black owns line length; W503/E203 conflict with black.
+extend-ignore = E203, W503, E501
+extend-exclude = venv, __pycache__, .git
+max-complexity = 15
