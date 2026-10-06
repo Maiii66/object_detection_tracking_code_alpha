@@ -25,6 +25,8 @@ is readable end to end.
 12. [Troubleshooting](#12-troubleshooting)
 13. [License](#13-license)
 14. [Future enhancements](#14-future-enhancements)
+15. [API reference](docs/API.md) — full class/function signatures
+16. [Tutorial](docs/TUTORIAL.md) — guided walkthrough, first run to outputs
 
 ---
 
@@ -52,6 +54,10 @@ ByteTrack, and writes an annotated video plus a per-frame tracking CSV.
   validation that fails loudly and names the offending field.
 - **Per-stage timing** — the run summary attributes the frame budget to
   detection, tracking and drawing so bottlenecks are identifiable.
+- **Run statistics** — every run writes `output/run_stats.json`: frames, FPS,
+  per-stage means and a per-class breakdown of detections and track ids.
+- **Profiling on demand** — `--profile` adds a cProfile report
+  (`output/profile.pstats`) for digging into where time actually goes.
 - **Graceful degradation** — codec fallback chain, NaN/zero FPS sanitising,
   and a clear install hint instead of a bare `ModuleNotFoundError`.
 
@@ -132,6 +138,14 @@ Checks every import, confirms the PyTorch build is CPU-only, reports the active
 thread count, verifies OpenCV has FFmpeg support, and runs a synthetic
 detect → track → draw pass. Exits `0` on success, `1` otherwise.
 
+### Install the development tools (optional)
+
+Only needed to run the test suite, linter and formatter:
+
+```powershell
+pip install -r requirements-dev.txt
+```
+
 ---
 
 ## 4. Usage
@@ -157,10 +171,30 @@ python main.py --source 0 --classes person car
 
 # Preview only, write nothing
 python main.py --source clip.mp4 --no-video --no-csv
+
+# Profile the run: writes output/profile.pstats and prints hot functions
+python main.py --source clip.mp4 --no-display --profile
+
+# Skip the JSON statistics report
+python main.py --source clip.mp4 --no-stats
+
+# Custom output directory (video, CSV, stats and profile all land there)
+python main.py --source clip.mp4 --output-dir results/session1
+
+# Batch: annotate every clip in a folder (PowerShell)
+foreach ($f in Get-ChildItem data/*.mp4) {
+    python main.py --source $f.FullName --no-display --output-dir "out/$($f.BaseName)"
+}
+
+# Read the first few tracking rows for analysis
+Get-Content output/tracking.csv -TotalCount 5
+
+# Inspect what the run saw
+Get-Content output/run_stats.json
 ```
 
-Press `q` in the preview window to quit. `Ctrl+C` exits cleanly and still
-prints the run summary.
+Press `q` in the preview window to quit. `Ctrl+C` exits cleanly, still
+prints the run summary, and writes the statistics/profile artefacts too.
 
 ---
 
@@ -188,6 +222,8 @@ prints the run summary.
 | `--no-video` | — | Alias for `--no-save-video` |
 | `--save-csv` / `--no-save-csv` | save | Toggle CSV output |
 | `--no-csv` | — | Alias for `--no-save-csv` |
+| `--no-stats` | stats written | Skip `output/run_stats.json` |
+| `--profile` | off | Write `output/profile.pstats` (cProfile) after the run |
 | `--draw-trails` / `--no-draw-trails` | off | Motion trails per track |
 | `--no-fps` | HUD shown | Hide the FPS/resolution HUD |
 | `--no-display` | display shown | Headless mode; no preview window |
@@ -248,6 +284,8 @@ warning rather than failing, since it is unusable but not fatal on CPU.
 | `output/<name>_tracked.mp4` | Annotated video. Falls back to `.avi` if the codec requires it. |
 | `output/result.png` | Annotated still, when the source is a single image. |
 | `output/tracking.csv` | One row per track per frame. |
+| `output/run_stats.json` | Run summary: frames, FPS, per-stage means, per-class counts (suppress with `--no-stats`). |
+| `output/profile.pstats` | cProfile dump, only with `--profile`. Open with `python -m pstats output/profile.pstats`. |
 
 CSV columns:
 
@@ -271,6 +309,32 @@ Example:
 frame,track_id,class_id,class_name,confidence,x1,y1,x2,y2,age
 0,1,0,person,0.9134,52.31,98.77,114.02,201.44,0
 0,2,2,car,0.7842,402.10,118.55,472.88,231.02,0
+```
+
+`run_stats.json` example (structure abridged, numbers from a sample 140-frame
+4K run — they vary by machine and run):
+
+```json
+{
+  "source": "test_video.mp4",
+  "source_kind": "video",
+  "device": "cpu",
+  "model": "yolov8n",
+  "imgsz": 480,
+  "wall_seconds": 25.8,
+  "frames": 140,
+  "detections_total": 796,
+  "unique_track_ids": 31,
+  "avg_fps": 18.4,
+  "mean_detect_ms": 53.0,
+  "mean_track_ms": 1.0,
+  "mean_draw_ms": 0.4,
+  "per_class": {
+    "car": { "detections": 723, "unique_track_ids": 31 },
+    "person": { "detections": 32, "unique_track_ids": 0 }
+  },
+  "outputs": { "video": "output/test_video_tracked.mp4" }
+}
 ```
 
 ---
@@ -310,23 +374,35 @@ draw     1.55 ms  (  1.7%)
 
 ### Measured baselines
 
-Verified on an i5-1235U (10C/12T), CPU-only:
+Detection only (no tracking/drawing/encoding), `yolov8n`, CPU-only, on an
+**i5-1235U (10C/12T)**, 20 timed frames after warm-up, measured
+2026-10-06 with `python scripts/benchmark.py`:
 
-| Model | imgsz | Model load | Inference |
-|---|---|---|---|
-| yolov8n | 640 | ~80 ms | ~90 ms |
-| yolov8n | 480 | ~50 ms | ~60 ms |
-| yolov8n | 320 | ~35 ms | ~40 ms |
+| imgsz | mean ms | median ms | p95 ms | FPS |
+|---|---|---|---|---|
+| 320 | 26.5 | 26.2 | 30.5 | 37.8 |
+| 480 | 39.1 | 38.7 | 43.9 | 25.6 |
+| 640 | 59.5 | 55.5 | 63.7 | 16.8 |
 
-These exclude model load and warm-up, and depend on scene complexity. Benchmark
-on your own hardware rather than trusting these numbers.
+End-to-end throughput is lower than these figures suggest: tracking, drawing
+and video encoding sit on top of detection. Full 4K runs at `imgsz=480`
+measured **18–22 FPS** overall (detect ~41–53 ms / track ~1 ms / draw <4 ms).
+
+Reproduce on your own hardware:
+
+```powershell
+python scripts/benchmark.py --source test_video.mp4
+```
+
+Numbers depend on core count, thermals and scene complexity — benchmark
+locally rather than trusting published figures.
 
 ---
 
 ## 9. Architecture
 
 ```
-main.py                    CLI, source opening, frame loop, timing summary
+main.py                    CLI, setup (_prepare), frame loop, timing summary
   |
   +-- config/
   |     config.py           dataclasses, CLI, YAML merging, validation
@@ -336,12 +412,20 @@ main.py                    CLI, source opening, frame loop, timing summary
   |     detector.py         ultralytics wrapper -> Detection
   |     tracker.py          Kalman + Hungarian -> Track
   |     visualizer.py       drawing, VideoWriter, CSV writer
+  |     stats.py            RunStats -> output/run_stats.json
   |     __init__.py         re-exports the public API
   |
+  +-- scripts/
+  |     benchmark.py        detector micro-benchmark (README baselines)
+  |     make_tutorial_video.py  renders the captioned tutorial MP4
+  |
+  +-- tests/                pytest suite (unit + end-to-end)
+  +-- docs/                 API.md, TUTORIAL.md
   +-- verify_env.py         environment and integration checks
 ```
 
-The per-frame loop is linear and lives in `main.run`:
+The per-frame path is linear and lives in `main._step`, called by
+`main._frame_loop`:
 
 ```
 cap.read() -> detector.detect() -> tracker.update() -> visualizer.draw()
@@ -350,7 +434,8 @@ cap.read() -> detector.detect() -> tracker.update() -> visualizer.draw()
 
 **Layering rules.** `config` depends on nothing. `detector` depends on `config`.
 `tracker` depends on `config` and `detector` (for the `Detection` type).
-`visualizer` depends on `config`. Only `main.py` knows about all of them.
+`visualizer` depends on `config`. `stats` depends on nothing. Only `main.py`
+knows about all of them.
 
 `ultralytics` is imported inside `YOLODetector._load`, never at module scope, so
 every module imports cleanly with no ML stack installed — which is what makes
@@ -427,7 +512,35 @@ because a generated `__eq__` would compare numpy arrays element-wise and raise
 python verify_env.py
 ```
 
-### Offline tests
+### Test suite
+
+```powershell
+pip install -r requirements-dev.txt
+
+pytest                    # full suite: 80 unit tests + integration
+pytest -m "not slow"      # fast tests only (skip the end-to-end run)
+pytest tests/test_tracker.py -q
+```
+
+The integration tests (`-m slow`) run the real pipeline on tiny generated
+videos/images and are skipped automatically when `models/yolov8n.pt` is
+absent.
+
+### Lint and format
+
+```powershell
+flake8 .
+black --check .
+black .                   # reformat
+```
+
+### Benchmark
+
+```powershell
+python scripts/benchmark.py --source test_video.mp4
+```
+
+### Offline tracker check
 
 The tracker and visualizer need no model, so they can be validated with
 synthetic detections before installing PyTorch:
@@ -513,6 +626,51 @@ corrupt or zero-byte video file. Check the source path.
 
 Windows firewall or antivirus scanning `models/` on first download. Retry.
 
+### Model weights not found / download fails
+
+`yolov8n.pt` is downloaded on first run into `models/`. If the machine has no
+network access, copy the file there manually from another machine, or set
+`--model` to a path you already have. Offline runs fail fast with a clear
+error.
+
+### RTSP camera will not connect
+
+- Check the URL: `rtsp://user:pass@192.168.1.5:554/stream`.
+- Verify credentials and that the camera and PC are on the same network.
+- Some cameras need a specific profile/path — open the stream in VLC first.
+- Corporate firewalls often block TCP 554. Test with
+  `ffplay rtsp://...` to separate camera problems from code problems.
+
+### `PermissionError` writing outputs
+
+The `output/` (or `--output-dir`) path is read-only or locked by another
+program. Either free the directory, or point elsewhere:
+
+```powershell
+python main.py --source clip.mp4 --output-dir $env:TEMP\tracking_out
+```
+
+### `No module named 'pytest'` (or `flake8` / `black`)
+
+Development tools are optional and separate:
+
+```powershell
+pip install -r requirements-dev.txt
+```
+
+### `--device cuda` falls back to `cpu`
+
+The installed PyTorch build has no CUDA support (`torch.cuda.is_available()`
+is `False` — `verify_env.py` reports this). Reinstall a CUDA build of torch
+if the machine has an NVIDIA GPU, or stay on CPU.
+
+### `run_stats.json` or `profile.pstats` missing
+
+- `run_stats.json` — suppressed by `--no-stats`; check the log for
+  `run statistics written to ...` to confirm it was written.
+- `profile.pstats` — only written when `--profile` is passed, and only once
+  the run finishes (or is interrupted with `Ctrl+C`).
+
 ---
 
 ## 13. License
@@ -539,8 +697,6 @@ Copyright (C) 2026 maiyarasu.
 - **Object counting** with in/out line crossing and region geofencing.
 - **Multi-camera** support with per-camera tracker instances.
 - **Trajectory export** (MOT-challenge format) for benchmark comparison.
-- **Unit tests** under `tests/` with pytest, and a synthetic-video fixture
-  generator so the full pipeline is testable in CI without a model download.
 
 ---
 
