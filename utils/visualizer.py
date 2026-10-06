@@ -17,12 +17,15 @@ import csv
 import logging
 from collections import deque
 from pathlib import Path
-from typing import Deque, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Deque, Dict, Iterable, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
 
 from config.config import VisualizationConfig
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard, erased at runtime
+    from utils.tracker import Track
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,8 +35,16 @@ LOGGER = logging.getLogger(__name__)
 CODEC_FALLBACKS: Tuple[str, ...] = ("mp4v", "avc1", "MJPG")
 
 CSV_COLUMNS = (
-    "frame", "track_id", "class_id", "class_name", "confidence",
-    "x1", "y1", "x2", "y2", "age",
+    "frame",
+    "track_id",
+    "class_id",
+    "class_name",
+    "confidence",
+    "x1",
+    "y1",
+    "x2",
+    "y2",
+    "age",
 )
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -82,19 +93,18 @@ def open_writer(
             writer = cv2.VideoWriter(
                 str(target), cv2.VideoWriter_fourcc(*codec), rate, (width, height)
             )
-        except cv2.error as exc:                       # pragma: no cover
+        except cv2.error as exc:  # pragma: no cover
             LOGGER.warning("codec %s raised on open: %s", codec, exc)
             continue
         if writer.isOpened():
             if target != output_path:
-                LOGGER.info("codec %s requires a .avi container -> %s",
-                            codec, target.name)
-            LOGGER.info("video writer open: %s (%s @ %.2f fps, %dx%d)",
-                        target, codec, rate, width, height)
+                LOGGER.info("codec %s requires a .avi container -> %s", codec, target.name)
+            LOGGER.info(
+                "video writer open: %s (%s @ %.2f fps, %dx%d)", target, codec, rate, width, height
+            )
             return writer
         writer.release()
-        LOGGER.warning("codec %s unavailable for %s; trying next",
-                       codec, target.name)
+        LOGGER.warning("codec %s unavailable for %s; trying next", codec, target.name)
 
     LOGGER.error("no usable codec from %s; video output disabled", list(codecs))
     return None
@@ -106,7 +116,7 @@ def release_writer(writer: Optional[cv2.VideoWriter]) -> None:
         return
     try:
         writer.release()
-    except cv2.error as exc:                            # pragma: no cover
+    except cv2.error as exc:  # pragma: no cover
         LOGGER.warning("error releasing writer: %s", exc)
 
 
@@ -124,6 +134,7 @@ class TracksCsvWriter:
     """
 
     def __init__(self, path: Path) -> None:
+        """Store the destination; the file is created lazily by :meth:`open`."""
         self.path = Path(path)
         self._handle = None
         self._writer: Optional[csv.writer] = None
@@ -153,18 +164,20 @@ class TracksCsvWriter:
         count = 0
         for track in tracks:
             x1, y1, x2, y2 = track.tlbr
-            self._writer.writerow([
-                int(frame_id),
-                int(track.track_id),
-                int(track.last_class_id),
-                track.last_class_name,
-                round(float(track.last_score), 4),
-                round(float(x1), 2),
-                round(float(y1), 2),
-                round(float(x2), 2),
-                round(float(y2), 2),
-                int(track.age),
-            ])
+            self._writer.writerow(
+                [
+                    int(frame_id),
+                    int(track.track_id),
+                    int(track.last_class_id),
+                    track.last_class_name,
+                    round(float(track.last_score), 4),
+                    round(float(x1), 2),
+                    round(float(y1), 2),
+                    round(float(x2), 2),
+                    round(float(y2), 2),
+                    int(track.age),
+                ]
+            )
             count += 1
         self.row_count += count
         return count
@@ -178,9 +191,11 @@ class TracksCsvWriter:
             LOGGER.info("csv writer closed: %s (%d rows)", self.path, self.row_count)
 
     def __enter__(self) -> "TracksCsvWriter":
+        """Enter the context manager; the file is opened on first write."""
         return self
 
     def __exit__(self, *exc_info: object) -> None:
+        """Close the CSV file when leaving the ``with`` block."""
         self.close()
 
 
@@ -193,6 +208,7 @@ class Visualizer:
     """
 
     def __init__(self, config: Optional[VisualizationConfig] = None) -> None:
+        """Validate rendering settings and clear trail/colour caches (see class docstring)."""
         self.config = config or VisualizationConfig()
         self.config.validate()
         self._trails: Dict[int, Deque[Tuple[int, int]]] = {}
@@ -221,9 +237,8 @@ class Visualizer:
 
     # -- trails -------------------------------------------------------------- #
     def _push_trail(self, track_id: int, center: Tuple[int, int]) -> None:
-        trail = self._trails.setdefault(
-            track_id, deque(maxlen=self.config.trail_length)
-        )
+        """Append ``center`` to the track's ring buffer, creating it if new."""
+        trail = self._trails.setdefault(track_id, deque(maxlen=self.config.trail_length))
         trail.append(center)
 
     def prune_trails(self, live_ids: Iterable[int]) -> None:
@@ -237,8 +252,7 @@ class Visualizer:
         self._trails.clear()
         self._color_cache.clear()
 
-    def _draw_trail(self, frame: np.ndarray, track_id: int,
-                    color: Tuple[int, int, int]) -> None:
+    def _draw_trail(self, frame: np.ndarray, track_id: int, color: Tuple[int, int, int]) -> None:
         """Draw a fading polyline through a track's recent centers."""
         points = list(self._trails.get(track_id, ()))
         if len(points) < 2:
@@ -250,13 +264,11 @@ class Visualizer:
             # of the trail is brightest without needing per-segment compositing.
             fade = 0.25 + 0.75 * (i / (len(points) - 1))
             shade = tuple(int(c * fade) for c in color)
-            cv2.line(overlay, start, end, shade, self.config.thickness,
-                     lineType=cv2.LINE_AA)
+            cv2.line(overlay, start, end, shade, self.config.thickness, lineType=cv2.LINE_AA)
         cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
 
     # -- drawing ------------------------------------------------------------- #
-    def _draw_label(self, frame: np.ndarray, track, color: Tuple[int, int, int]
-                    ) -> None:
+    def _draw_label(self, frame: np.ndarray, track: "Track", color: Tuple[int, int, int]) -> None:
         """Draw a filled caption box above the bounding box."""
         parts = [f"ID:{track.track_id}", track.last_class_name]
         if self.config.show_confidence:
@@ -265,23 +277,24 @@ class Visualizer:
 
         x1, y1, x2, _ = track.tlbr
         thickness = self.config.thickness
-        (tw, th), baseline = cv2.getTextSize(
-            text, FONT, self.config.font_scale, thickness
-        )
+        (tw, th), baseline = cv2.getTextSize(text, FONT, self.config.font_scale, thickness)
         x1i, y1i = int(x1), int(y1)
         # Place the label above the box, or inside it when there is no room.
         label_top = max(y1i - th - baseline - 4, 0)
         label_bottom = label_top + th + baseline + 4
-        cv2.rectangle(
-            frame, (x1i, label_top), (x1i + tw + 8, label_bottom), color, -1
-        )
+        cv2.rectangle(frame, (x1i, label_top), (x1i + tw + 8, label_bottom), color, -1)
         cv2.putText(
-            frame, text, (x1i + 4, label_bottom - baseline - 1),
-            FONT, self.config.font_scale, (0, 0, 0), thickness, cv2.LINE_AA,
+            frame,
+            text,
+            (x1i + 4, label_bottom - baseline - 1),
+            FONT,
+            self.config.font_scale,
+            (0, 0, 0),
+            thickness,
+            cv2.LINE_AA,
         )
 
-    def _draw_hud(self, frame: np.ndarray, fps: float,
-                  track_count: int) -> None:
+    def _draw_hud(self, frame: np.ndarray, fps: float, track_count: int) -> None:
         """Draw FPS, resolution and live-track count in the top-left."""
         if not self.config.show_fps:
             return
@@ -299,8 +312,14 @@ class Visualizer:
         cv2.rectangle(frame, (0, 0), (box_w, line_h * len(lines)), (0, 0, 0), -1)
         for i, line in enumerate(lines):
             cv2.putText(
-                frame, line, (8, line_h * i + line_h - 8), FONT, scale,
-                (0, 255, 255), 1, cv2.LINE_AA,
+                frame,
+                line,
+                (8, line_h * i + line_h - 8),
+                FONT,
+                scale,
+                (0, 255, 255),
+                1,
+                cv2.LINE_AA,
             )
 
     def draw(self, frame: np.ndarray, tracks: Sequence, fps: float = 0.0) -> np.ndarray:
@@ -333,9 +352,7 @@ class Visualizer:
                 self._push_trail(track.track_id, center)
                 self._draw_trail(canvas, track.track_id, color)
 
-            cv2.rectangle(
-                canvas, (x1, y1), (x2, y2), color, thickness, lineType=cv2.LINE_AA
-            )
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, thickness, lineType=cv2.LINE_AA)
             self._draw_label(canvas, track, color)
 
         if self.config.draw_trails:

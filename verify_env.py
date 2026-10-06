@@ -69,8 +69,7 @@ def main() -> int:
     safe_print("ENVIRONMENT VERIFICATION")
     safe_print(header)
     safe_print(f"Python     : {platform.python_version()} ({sys.executable})")
-    safe_print(f"Platform   : {platform.system()} {platform.release()} "
-               f"({platform.machine()})")
+    safe_print(f"Platform   : {platform.system()} {platform.release()} " f"({platform.machine()})")
     safe_print(f"CPU cores  : {os.cpu_count()} logical")
     safe_print("")
 
@@ -79,7 +78,7 @@ def main() -> int:
     numpy = check_import("numpy")
     cv2 = check_import("cv2", "opencv-python")
     scipy = check_import("scipy")
-    yaml = check_import("yaml", "PyYAML")
+    check_import("yaml", "PyYAML")
     safe_print("")
 
     # ---- 2. Deep learning stack ------------------------------------------ #
@@ -93,12 +92,21 @@ def main() -> int:
     if torch is not None:
         version = torch.__version__
         is_cpu = "+cpu" in version
-        record("torch is a CPU build", is_cpu,
-               version if is_cpu
-               else f"{version} is NOT +cpu - reinstall using "
-                    f"--index-url https://download.pytorch.org/whl/cpu")
-        record("threads >= 4", torch.get_num_threads() >= 4,
-               f"torch.get_num_threads() = {torch.get_num_threads()}")
+        record(
+            "torch is a CPU build",
+            is_cpu,
+            (
+                version
+                if is_cpu
+                else f"{version} is NOT +cpu - reinstall using "
+                f"--index-url https://download.pytorch.org/whl/cpu"
+            ),
+        )
+        record(
+            "threads >= 4",
+            torch.get_num_threads() >= 4,
+            f"torch.get_num_threads() = {torch.get_num_threads()}",
+        )
         try:
             cuda = torch.cuda.is_available()
             if cuda:
@@ -123,33 +131,38 @@ def main() -> int:
     if scipy is not None:
         try:
             from scipy.optimize import linear_sum_assignment
-            rows, cols = linear_sum_assignment(
-                __import__("numpy").array([[0.1, 5.0], [5.0, 0.1]])
-            )
-            record("Hungarian assignment", len(rows) == 2,
-                   f"matched {len(rows)} pairs")
+
+            rows, cols = linear_sum_assignment(__import__("numpy").array([[0.1, 5.0], [5.0, 0.1]]))
+            record("Hungarian assignment", len(rows) == 2, f"matched {len(rows)} pairs")
         except Exception as exc:  # noqa: BLE001
             record("Hungarian assignment", False, str(exc))
 
     if numpy is not None and cv2 is not None:
         info = cv2.getBuildInformation()
         has_ffmpeg = "FFMPEG:                      YES" in info
-        record("OpenCV has FFmpeg", has_ffmpeg,
-               "video writing enabled" if has_ffmpeg
-               else "video output will be unavailable")
+        record(
+            "OpenCV has FFmpeg",
+            has_ffmpeg,
+            "video writing enabled" if has_ffmpeg else "video output will be unavailable",
+        )
         if config_mod is not None and cv2 is not None:
             from config.config import VisualizationConfig
             from utils.detector import Detection
             from utils.tracker import BYTETracker
             from utils.visualizer import Visualizer
+
             frame = numpy.zeros((240, 320, 3), dtype=numpy.uint8)
-            det = Detection(tlbr=numpy.array([10, 10, 80, 90]),
-                            score=0.9, class_id=0, class_name="person")
+            det = Detection(
+                tlbr=numpy.array([10, 10, 80, 90]), score=0.9, class_id=0, class_name="person"
+            )
             tracks = BYTETracker().update([det], frame_id=0)
             viz = Visualizer(VisualizationConfig())
             out = viz.draw(frame, tracks, fps=12.5)
-            record("synthetic detect->track->draw", out.shape == frame.shape,
-                   f"tracks={len(tracks)} out={out.shape}")
+            record(
+                "synthetic detect->track->draw",
+                out.shape == frame.shape,
+                f"tracks={len(tracks)} out={out.shape}",
+            )
 
     safe_print("")
 
@@ -174,8 +187,9 @@ def main() -> int:
     safe_print("")
     safe_print("Common fixes:")
     safe_print("  python -m pip install --upgrade pip setuptools wheel")
-    safe_print("  pip install torch torchvision "
-               "--index-url https://download.pytorch.org/whl/cpu")
+    safe_print(
+        "  pip install torch torchvision " "--index-url https://download.pytorch.org/whl/cpu"
+    )
     safe_print("  pip install -r requirements.txt")
     return 1
 

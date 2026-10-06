@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -61,6 +61,7 @@ class Detection:
     class_name: str
 
     def __post_init__(self) -> None:
+        """Coerce the box to a float32 ``(4,)`` array and normalise scalars."""
         arr = np.asarray(self.tlbr, dtype=np.float32).reshape(4)
         self.tlbr = arr
         self.score = float(self.score)
@@ -72,9 +73,7 @@ class Detection:
     def tlwh(self) -> np.ndarray:
         """Center-x, center-y, width, height."""
         x1, y1, x2, y2 = self.tlbr
-        return np.array(
-            [(x1 + x2) / 2.0, (y1 + y2) / 2.0, x2 - x1, y2 - y1], dtype=np.float32
-        )
+        return np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0, x2 - x1, y2 - y1], dtype=np.float32)
 
     @property
     def xyah(self) -> np.ndarray:
@@ -84,10 +83,12 @@ class Detection:
 
     @property
     def area(self) -> float:
+        """Box area in pixels, clamped to zero for inverted coordinates."""
         x1, y1, x2, y2 = self.tlbr
         return max(0.0, x2 - x1) * max(0.0, y2 - y1)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        """Compact single-line representation without numpy array noise."""
         x1, y1, x2, y2 = self.tlbr
         return (
             f"Detection({self.class_name} #{self.class_id} "
@@ -115,6 +116,7 @@ class YOLODetector:
         config: Optional[DetectorConfig] = None,
         device: str = "auto",
     ) -> None:
+        """Initialise config, device and rolling timing counters (see class docstring)."""
         self.config = config or DetectorConfig()
         self.device = self.resolve_device(device)
         self._model: Any = None
@@ -180,7 +182,8 @@ class YOLODetector:
         self._model = model
         self._names = {int(k): str(v) for k, v in getattr(model, "names", {}).items()}
         LOGGER.info(
-            "model ready: %d classes, names=%s...", len(self._names),
+            "model ready: %d classes, names=%s...",
+            len(self._names),
             list(self._names.values())[:6],
         )
 
@@ -211,9 +214,7 @@ class YOLODetector:
                 unknown.append(str(raw))
         if unknown:
             sample = sorted(mapping.values())[:15]
-            raise ValueError(
-                f"unknown class name(s) {unknown}; expected COCO names like {sample}"
-            )
+            raise ValueError(f"unknown class name(s) {unknown}; expected COCO names like {sample}")
         return sorted(set(ids))
 
     # ------------------------------------------------------------------ #
@@ -246,10 +247,10 @@ class YOLODetector:
                 iou=cfg.iou,
                 imgsz=cfg.imgsz,
                 device=self.device,
-                half=cfg.half,      # always False on CPU
+                half=cfg.half,  # always False on CPU
                 classes=cfg.classes or None,
                 max_det=cfg.max_det,
-                verbose=False,      # suppress per-frame ultralytics spam
+                verbose=False,  # suppress per-frame ultralytics spam
             )
 
         elapsed_ms = (time.perf_counter() - started) * 1000.0
@@ -257,7 +258,8 @@ class YOLODetector:
         # Exponential moving average smooths the jitter in single-frame times.
         alpha = 0.1
         self.avg_detect_ms = (
-            elapsed_ms if self.total_frames == 1
+            elapsed_ms
+            if self.total_frames == 1
             else (1 - alpha) * self.avg_detect_ms + alpha * elapsed_ms
         )
 

@@ -9,6 +9,7 @@ tracker's ``Detection`` type, so ``detector`` must load first.
 """
 
 from .detector import Detection, YOLODetector
+from .stats import RunStats
 from .tracker import BYTETracker, KalmanFilterXYAH, Track, TrackState
 from .visualizer import TracksCsvWriter, Visualizer, open_writer, release_writer
 
@@ -16,6 +17,7 @@ __all__ = [
     "BYTETracker",
     "Detection",
     "KalmanFilterXYAH",
+    "RunStats",
     "Track",
     "TrackState",
     "TracksCsvWriter",

@@ -81,7 +81,9 @@ def resolve_threads(requested: Optional[int]) -> int:
     if count > available:
         LOGGER.warning(
             "num_threads=%d exceeds %d logical CPUs; clamping to %d",
-            count, available, available,
+            count,
+            available,
+            available,
         )
         count = available
     return count
@@ -103,27 +105,27 @@ class DetectorConfig:
     max_det: int = 100
 
     def validate(self) -> None:
+        """Check inference thresholds and normalise unsafe values.
+
+        Raises:
+            ValueError: a threshold is out of range, ``imgsz`` is not a
+                positive multiple of 32, or ``classes`` holds invalid ids.
+        """
         if not 0.0 < self.conf < 1.0:
             raise ValueError(f"detector.conf must be in (0, 1), got {self.conf}")
         if not 0.0 < self.iou < 1.0:
             raise ValueError(f"detector.iou must be in (0, 1), got {self.iou}")
         if self.imgsz <= 0 or self.imgsz % 32 != 0:
-            raise ValueError(
-                f"detector.imgsz must be a positive multiple of 32, got {self.imgsz}"
-            )
+            raise ValueError(f"detector.imgsz must be a positive multiple of 32, got {self.imgsz}")
         if self.half:
             LOGGER.warning("detector.half=True is unreliable on CPU; forcing False")
             self.half = False
         if self.classes is not None:
             bad = [c for c in self.classes if not isinstance(c, int) or c < 0]
             if bad:
-                raise ValueError(
-                    f"detector.classes must be non-negative ints, got {bad}"
-                )
+                raise ValueError(f"detector.classes must be non-negative ints, got {bad}")
             if len(self.classes) > 80:
-                raise ValueError(
-                    f"detector.classes has {len(self.classes)} ids; COCO has 80"
-                )
+                raise ValueError(f"detector.classes has {len(self.classes)} ids; COCO has 80")
 
 
 @dataclass
@@ -138,6 +140,12 @@ class TrackerConfig:
     frame_rate: int = 30
 
     def validate(self) -> None:
+        """Check ByteTrack thresholds and buffer sizes are mutually consistent.
+
+        Raises:
+            ValueError: thresholds are unordered/out of range or a counter
+                is below 1.
+        """
         if not 0.0 < self.track_low_thresh < self.track_high_thresh < 1.0:
             raise ValueError(
                 "expected 0 < track_low_thresh < track_high_thresh < 1, got "
@@ -148,9 +156,7 @@ class TrackerConfig:
                 f"tracker.new_track_thresh must be in (0, 1), got {self.new_track_thresh}"
             )
         if not 0.0 < self.match_thresh <= 1.0:
-            raise ValueError(
-                f"tracker.match_thresh must be in (0, 1], got {self.match_thresh}"
-            )
+            raise ValueError(f"tracker.match_thresh must be in (0, 1], got {self.match_thresh}")
         if self.track_buffer < 1:
             raise ValueError(f"tracker.track_buffer must be >= 1, got {self.track_buffer}")
         if self.frame_rate < 1:
@@ -169,16 +175,17 @@ class VisualizationConfig:
     font_scale: float = 0.5
 
     def validate(self) -> None:
+        """Check drawing parameters are positive.
+
+        Raises:
+            ValueError: thickness, font scale or trail length is not positive.
+        """
         if self.thickness < 1:
             raise ValueError(f"visualization.thickness must be >= 1, got {self.thickness}")
         if self.font_scale <= 0:
-            raise ValueError(
-                f"visualization.font_scale must be > 0, got {self.font_scale}"
-            )
+            raise ValueError(f"visualization.font_scale must be > 0, got {self.font_scale}")
         if self.trail_length < 1:
-            raise ValueError(
-                f"visualization.trail_length must be >= 1, got {self.trail_length}"
-            )
+            raise ValueError(f"visualization.trail_length must be >= 1, got {self.trail_length}")
 
 
 @dataclass
@@ -187,18 +194,23 @@ class OutputConfig:
 
     save_video: bool = True
     save_csv: bool = True
+    save_stats: bool = True
     output_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "output")
     codec: str = "mp4v"
 
     def validate(self) -> None:
+        """Check the codec name and create the output directory if missing.
+
+        Raises:
+            ValueError: the codec name is empty or the directory cannot be
+                created (permissions, read-only disk).
+        """
         if not str(self.codec).strip():
             raise ValueError("output.codec must not be empty")
         try:
             self.output_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            raise ValueError(
-                f"cannot create output dir {self.output_dir}: {exc}"
-            ) from exc
+            raise ValueError(f"cannot create output dir {self.output_dir}: {exc}") from exc
 
 
 @dataclass
@@ -220,18 +232,22 @@ class AppConfig:
     # ---- derived properties ---------------------------------------------- #
     @property
     def resolved_device(self) -> str:
+        """Device string actually used (``auto`` expanded to cpu/cuda/mps)."""
         return detect_device(self.device)
 
     @property
     def is_url(self) -> bool:
+        """True when ``source`` uses a streaming scheme (rtsp/http/...)."""
         return self.source.lower().startswith(URL_SCHEMES)
 
     @property
     def is_webcam(self) -> bool:
+        """True when ``source`` is a bare device index such as ``0``."""
         return not self.is_url and self.source.isdigit()
 
     @property
     def is_image(self) -> bool:
+        """True when ``source`` names a file with a known image extension."""
         return (
             not self.is_url
             and not self.is_webcam
@@ -240,6 +256,7 @@ class AppConfig:
 
     @property
     def source_kind(self) -> str:
+        """One of ``webcam``, ``stream``, ``image`` or ``video``."""
         if self.is_webcam:
             return "webcam"
         if self.is_url:
@@ -258,9 +275,7 @@ class AppConfig:
             LOGGER.warning("torch is not importable; skipping thread configuration")
             return count
         torch.set_num_threads(count)
-        LOGGER.info(
-            "torch threads set to %d of %d logical CPUs", count, os.cpu_count() or count
-        )
+        LOGGER.info("torch threads set to %d of %d logical CPUs", count, os.cpu_count() or count)
         return count
 
     # ---- validation ------------------------------------------------------- #
@@ -341,9 +356,7 @@ class AppConfig:
         with open(path, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
         if not isinstance(data, dict):
-            raise ValueError(
-                f"{path}: top level must be a mapping, got {type(data).__name__}"
-            )
+            raise ValueError(f"{path}: top level must be a mapping, got {type(data).__name__}")
 
         cfg = dataclasses.replace(self)
         sections = {
@@ -417,24 +430,25 @@ def _merge_into(obj: Any, data: Any, where: str) -> None:
 # silently accept a typo'd destination and write it to the wrong sub-config.
 _CLI_MAP: Dict[str, Tuple[str, str]] = {
     # detector
-    "model":             ("detector", "model"),
-    "confidence":        ("detector", "conf"),
-    "iou":               ("detector", "iou"),
-    "imgsz":             ("detector", "imgsz"),
-    "classes":           ("detector", "classes"),
+    "model": ("detector", "model"),
+    "confidence": ("detector", "conf"),
+    "iou": ("detector", "iou"),
+    "imgsz": ("detector", "imgsz"),
+    "classes": ("detector", "classes"),
     # tracker
     "track_high_thresh": ("tracker", "track_high_thresh"),
-    "track_low_thresh":  ("tracker", "track_low_thresh"),
-    "new_track_thresh":  ("tracker", "new_track_thresh"),
-    "track_buffer":      ("tracker", "track_buffer"),
-    "match_thresh":      ("tracker", "match_thresh"),
+    "track_low_thresh": ("tracker", "track_low_thresh"),
+    "new_track_thresh": ("tracker", "new_track_thresh"),
+    "track_buffer": ("tracker", "track_buffer"),
+    "match_thresh": ("tracker", "match_thresh"),
     # visualization
-    "draw_trails":       ("visualization", "draw_trails"),
-    "show_fps":          ("visualization", "show_fps"),
+    "draw_trails": ("visualization", "draw_trails"),
+    "show_fps": ("visualization", "show_fps"),
     # output
-    "output_dir":        ("output", "output_dir"),
-    "save_video":        ("output", "save_video"),
-    "save_csv":          ("output", "save_csv"),
+    "output_dir": ("output", "output_dir"),
+    "save_video": ("output", "save_video"),
+    "save_csv": ("output", "save_csv"),
+    "save_stats": ("output", "save_stats"),
 }
 
 _TOP_LEVEL = {"source", "device", "num_threads", "log_level", "log_file"}
@@ -527,8 +541,13 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--save-video", action=argparse.BooleanOptionalAction, default=None)
     g.add_argument("--save-csv", action=argparse.BooleanOptionalAction, default=None)
     g.add_argument(
-        "--draw-trails", action=argparse.BooleanOptionalAction, default=None
+        "--no-stats",
+        dest="save_stats",
+        action="store_false",
+        default=None,
+        help="Skip writing output/run_stats.json",
     )
+    g.add_argument("--draw-trails", action=argparse.BooleanOptionalAction, default=None)
     g.add_argument(
         "--no-fps",
         dest="show_fps",

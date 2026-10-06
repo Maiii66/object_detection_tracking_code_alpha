@@ -91,6 +91,7 @@ class Track:
     last_class_name: str = "unknown"
 
     def __post_init__(self) -> None:
+        """Coerce the box to a float32 ``(4,)`` array."""
         self.tlbr = np.asarray(self.tlbr, dtype=np.float32).reshape(4)
 
     @property
@@ -107,15 +108,15 @@ class Track:
     def tlwh(self) -> np.ndarray:
         """Center-x, center-y, width, height."""
         x1, y1, x2, y2 = self.tlbr
-        return np.array(
-            [(x1 + x2) / 2.0, (y1 + y2) / 2.0, x2 - x1, y2 - y1], dtype=np.float32
-        )
+        return np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0, x2 - x1, y2 - y1], dtype=np.float32)
 
     def mark_lost(self) -> None:
+        """Move the track to ``LOST`` and count a frame without a match."""
         self.state = TrackState.LOST
         self.time_since_update += 1
 
     def mark_removed(self) -> None:
+        """Move the track to ``REMOVED``; it is dropped on the next update."""
         self.state = TrackState.REMOVED
 
     def update(self, detection: Detection, frame_id: int) -> None:
@@ -144,6 +145,7 @@ class Track:
         return self.tlbr
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        """Compact single-line representation without numpy array noise."""
         x1, y1, x2, y2 = self.tlbr
         return (
             f"Track(id={self.track_id} {self.last_class_name} "
@@ -156,9 +158,7 @@ def _xyah_to_tlbr(xyah: Sequence[float]) -> np.ndarray:
     """Convert center/size ``(cx, cy, a, h)`` to ``(x1, y1, x2, y2)``."""
     cx, cy, a, h = xyah[:4]
     w = max(a * h, 1e-6)
-    return np.array(
-        [cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0], dtype=np.float32
-    )
+    return np.array([cx - w / 2.0, cy - h / 2.0, cx + w / 2.0, cy + h / 2.0], dtype=np.float32)
 
 
 class KalmanFilterXYAH:
@@ -182,6 +182,7 @@ class KalmanFilterXYAH:
         std_weight_position: float = 1.0 / 20,
         std_weight_velocity: float = 1.0 / 160,
     ) -> None:
+        """Set noise weights and allocate the motion/update matrices (see class docstring)."""
         self._std_pos = std_weight_position
         self._std_vel = std_weight_velocity
 
@@ -196,8 +197,7 @@ class KalmanFilterXYAH:
         self._covariance: Optional[np.ndarray] = None
 
     # -- construction ------------------------------------------------------ #
-    def initiate(self, measurement: Sequence[float]
-                 ) -> Tuple[np.ndarray, np.ndarray]:
+    def initiate(self, measurement: Sequence[float]) -> Tuple[np.ndarray, np.ndarray]:
         """Seed the filter from a first measurement.
 
         Position variance scales with the measurement magnitude, so a large
@@ -221,9 +221,9 @@ class KalmanFilterXYAH:
         return mean, covariance
 
     # -- prediction -------------------------------------------------------- #
-    def predict(self, mean: Optional[np.ndarray] = None,
-                covariance: Optional[np.ndarray] = None
-                ) -> Tuple[np.ndarray, np.ndarray]:
+    def predict(
+        self, mean: Optional[np.ndarray] = None, covariance: Optional[np.ndarray] = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Advance one step, returning the new ``(mean, covariance)``.
 
         Called with no arguments on a freshly initiated filter, then with the
@@ -247,15 +247,14 @@ class KalmanFilterXYAH:
         motion_cov = np.diag(np.square(np.asarray(std, dtype=np.float32)))
 
         mean = (self._motion_mat @ mean.reshape(-1, 1)).ravel()
-        covariance = (
-            self._motion_mat @ covariance @ self._motion_mat.T + motion_cov
-        ).astype(np.float32)
+        covariance = (self._motion_mat @ covariance @ self._motion_mat.T + motion_cov).astype(
+            np.float32
+        )
         self._mean, self._covariance = mean, covariance
         return mean, covariance
 
     # -- correction -------------------------------------------------------- #
-    def project(self, mean: np.ndarray, covariance: np.ndarray
-                ) -> Tuple[np.ndarray, np.ndarray]:
+    def project(self, mean: np.ndarray, covariance: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Project the state down into the 4-D measurement space."""
         std = [
             self._std_pos * mean[0],
@@ -288,15 +287,11 @@ class KalmanFilterXYAH:
             ).T
         except np.linalg.LinAlgError:
             LOGGER.debug("projected covariance not PD; using pseudo-inverse")
-            gain = (self._covariance @ self._update_mat.T) @ np.linalg.pinv(
-                projected_cov
-            )
+            gain = (self._covariance @ self._update_mat.T) @ np.linalg.pinv(projected_cov)
 
         innovation = np.asarray(measurement, dtype=np.float32) - projected_mean
         new_mean = self._mean + (gain @ innovation.reshape(-1, 1)).ravel()
-        new_covariance = (
-            self._covariance - gain @ projected_cov @ gain.T
-        ).astype(np.float32)
+        new_covariance = (self._covariance - gain @ projected_cov @ gain.T).astype(np.float32)
 
         self._mean, self._covariance = new_mean, new_covariance
         return new_mean, new_covariance
@@ -344,9 +339,7 @@ class KalmanFilterXYAH:
             # transpose is what makes the axis=1 sum run over the four state
             # dimensions and yield one distance per measurement. Omitting it
             # silently returns (4,) for a single detection.
-            z = solve_triangular(
-                chol, d.T, lower=True, check_finite=False
-            ).T
+            z = solve_triangular(chol, d.T, lower=True, check_finite=False).T
             return np.sum(z * z, axis=1)
         raise ValueError(f"invalid distance metric {metric!r}; use 'maha' or 'gaussian'")
 
@@ -354,8 +347,9 @@ class KalmanFilterXYAH:
 # ---------------------------------------------------------------------- #
 # Association
 # ---------------------------------------------------------------------- #
-def linear_assignment(cost_matrix: np.ndarray, max_cost: float
-                      ) -> Tuple[Tuple[np.ndarray, np.ndarray], List[int], List[int]]:
+def linear_assignment(
+    cost_matrix: np.ndarray, max_cost: float
+) -> Tuple[Tuple[np.ndarray, np.ndarray], List[int], List[int]]:
     """Optimal one-to-one assignment minimising total cost.
 
     Pairs costing more than ``max_cost`` are excluded by masking them to
@@ -413,19 +407,16 @@ def matching_cascade(
         the original SORT code. The value equals
         ``scipy.stats.chi2.ppf(0.95, 4) == 9.4877``.
     """
-    return linear_assignment(
-        distance_matrix, max_cost=min(max_distance, threshold)
-    )
+    return linear_assignment(distance_matrix, max_cost=min(max_distance, threshold))
 
 
-def iou_distance(atlbrs: Sequence[np.ndarray], btlbrs: Sequence[np.ndarray]
-                 ) -> np.ndarray:
+def iou_distance(atlbrs: Sequence[np.ndarray], btlbrs: Sequence[np.ndarray]) -> np.ndarray:
     """Pairwise ``1 - IoU`` between two sets of boxes. Shape ``(M, N)``."""
     if len(atlbrs) == 0 or len(btlbrs) == 0:
         return np.zeros((len(atlbrs), len(btlbrs)), dtype=np.float32)
 
-    a = np.asarray(atlbrs, dtype=np.float32)[:, None, :]   # (M, 1, 4)
-    b = np.asarray(btlbrs, dtype=np.float32)[None, :, :]   # (1, N, 4)
+    a = np.asarray(atlbrs, dtype=np.float32)[:, None, :]  # (M, 1, 4)
+    b = np.asarray(btlbrs, dtype=np.float32)[None, :, :]  # (1, N, 4)
 
     x1 = np.maximum(a[..., 0], b[..., 0])
     y1 = np.maximum(a[..., 1], b[..., 1])
@@ -467,6 +458,7 @@ class BYTETracker:
     """
 
     def __init__(self, config: Optional[TrackerConfig] = None) -> None:
+        """Validate config, allocate track pools and scale the lost buffer (see class docstring)."""
         self.config = config or TrackerConfig()
         self.config.validate()
         self._active: List[Track] = []
@@ -482,14 +474,17 @@ class BYTETracker:
     # -- introspection ------------------------------------------------------ #
     @property
     def track_count(self) -> int:
+        """Number of tracks currently in the active pool."""
         return len(self._active)
 
     @property
     def lost_count(self) -> int:
+        """Number of unmatched tracks still awaiting recovery."""
         return len(self._lost)
 
     @property
     def next_id(self) -> int:
+        """Id that the next newly initiated track will receive."""
         return self._next_id
 
     def reset(self) -> None:
@@ -522,8 +517,7 @@ class BYTETracker:
         self._next_id += 1
         return track
 
-    def _mahalanobis_matrix(self, tracks: List[Track],
-                             detections: List[Detection]) -> np.ndarray:
+    def _mahalanobis_matrix(self, tracks: List[Track], detections: List[Detection]) -> np.ndarray:
         """``(len(tracks), len(detections))`` Mahalanobis distance matrix."""
         if not tracks or not detections:
             return np.zeros((len(tracks), len(detections)), dtype=np.float32)
@@ -556,8 +550,7 @@ class BYTETracker:
 
         pool_high = [d for d in detections if d.score >= cfg.track_high_thresh]
         pool_low = [
-            d for d in detections
-            if cfg.track_low_thresh <= d.score < cfg.track_high_thresh
+            d for d in detections if cfg.track_low_thresh <= d.score < cfg.track_high_thresh
         ]
 
         matched_high: set[int] = set()
@@ -600,12 +593,8 @@ class BYTETracker:
         # The occlusion-survival step: these boxes were too weak to start a
         # track but are often good enough to re-attach one that stage 1 dropped.
         if self._lost and pool_low:
-            cost = iou_distance(
-                [t.tlbr for t in self._lost], [d.tlbr for d in pool_low]
-            )
-            matches, u_lost, u_det = linear_assignment(
-                cost, max_cost=cfg.match_thresh
-            )
+            cost = iou_distance([t.tlbr for t in self._lost], [d.tlbr for d in pool_low])
+            matches, u_lost, u_det = linear_assignment(cost, max_cost=cfg.match_thresh)
             recovered: List[Track] = []
             for row, col in zip(matches[0], matches[1]):
                 track, det = self._lost[row], pool_low[col]
@@ -637,6 +626,7 @@ class BYTETracker:
         return [t for t in activated if t.is_activated]
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        """Compact pool summary: active/lost counts and the next id."""
         return (
             f"BYTETracker(active={len(self._active)} lost={len(self._lost)} "
             f"next_id={self._next_id})"
